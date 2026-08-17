@@ -1,0 +1,4 @@
+LIBRARY "example"
+EXPORTS
+    GetInterfaceVersion
+    CreateInstance
