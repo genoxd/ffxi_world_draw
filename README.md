@@ -1,9 +1,14 @@
 # ffxi_world_draw
 
-Enables drawing of 3D geometry inside Final Fantasy XI's world from a Windower 4
-plugin. This renders in world space so it respects the depth buffer.
+Enables drawing of 3D geometry inside Final Fantasy XI's world from Windower 4.
+This renders in world space so it respects the depth buffer.
 
-Single header. Include it, override one function, emit triangles.
+Two ways to use it:
+
+- **C++ plugin** — single header. Include it, override one function, emit
+  triangles. Start at [Quick start](#quick-start).
+- **Lua addon** — load `worlddraw.dll` from your addon and describe geometry
+  in Lua. Start at [From Lua](#from-lua).
 
 ## Quick start
 
@@ -228,6 +233,95 @@ Other overrides available:
 
 `SetDrawEnabled(false)` stops drawing without unloading; `DrawEnabled()` reads
 it back. Drawing is on by default.
+
+## From Lua
+
+An addon loads the prebuilt module and describes what it wants drawn. There is
+no C++ to write.
+
+```lua
+local addon_path = windower.addon_path:gsub('\\', '/')
+package.cpath = package.cpath .. ';' .. addon_path .. 'libs/?.dll'
+local wd = require('worlddraw')
+
+wd.begin()
+wd.ring(x, y, z, 10.0, 0.25, 0xFFFFAA00)
+wd.pillar(x, y, z, 0.15, 3.0, 0xFF00FFFF)
+wd.commit()
+
+windower.register_event('unload', function()
+    wd.close()
+end)
+```
+
+`wd.close()` on unload is **required**. Lua frees the library when your addon
+closes, and the drawing hooks have to come out first; leaving it out crashes
+the client.
+
+### What you get
+
+| call | draws |
+|---|---|
+| `wd.pillar(x, y, z, width, height, color)` | an upright bar, facing the camera |
+| `wd.ring(x, y, z, radius, thickness, color [, segments])` | a horizontal circle as an upright band |
+| `wd.line(x1,y1,z1, x2,y2,z2, width, color)` | a bar between two points |
+| `wd.panel(x, y, z, width, height, facing, texture [, color])` | a picture with a fixed facing |
+| `wd.sprite(x, y, z, width, height, texture [, color])` | a picture that turns to face the camera |
+| `wd.triangle(x1,y1,z1, x2,y2,z2, x3,y3,z3 [, color])` | one triangle |
+
+| call | does |
+|---|---|
+| `wd.begin()` | start describing |
+| `wd.commit()` | publish it; drawn every frame until replaced |
+| `wd.clear()` | draw nothing |
+| `wd.load_texture(path)` | returns a texture id, or nil |
+| `wd.last_error()` | why the last call failed, or nil |
+| `wd.close()` | release; call this from your `unload` event |
+
+Sizes are in yalms and coordinates are Windower's, so `windower.ffxi` values go
+straight in. See [Coordinates and units](#coordinates-and-units).
+
+### The description is kept
+
+`commit()` publishes a description that is drawn every frame until you replace
+it. Static geometry costs nothing per frame — describe it once. For something
+that moves, rebuild it in `prerender`:
+
+```lua
+windower.register_event('prerender', function()
+    local me = windower.ffxi.get_mob_by_target('me')
+    wd.begin()
+    wd.ring(me.x, me.y, me.z, 50.0, 0.25, 0xFFFFAA00)
+    wd.commit()
+end)
+```
+
+Note `get_mob_by_target('me')` returns the logical position, which runs ahead
+of your character's on-screen model by about half a yalm while moving. Anything
+anchored to you will sit slightly in front of you.
+
+### Example addon
+
+[`lua/worlddrawdemo`](lua/worlddrawdemo) is a complete addon: a ring, a post,
+spokes and a textured picture, all occluded by the world.
+
+```
+//lua load worlddrawdemo
+//wdd here      place it where you are standing
+//wdd follow    make it follow you
+//wdd clear     remove it
+```
+
+Copy the folder into `Windower4/addons/`, then build `worlddraw.dll` and put it
+in the addon's `libs/`:
+
+```bash
+lua/build.sh
+lua/deploy.sh worlddrawdemo
+```
+
+**Only copy the DLL while the addon is unloaded.** Lua maps it into the running
+client, and overwriting a mapped image corrupts it and crashes the game.
 
 ## License
 

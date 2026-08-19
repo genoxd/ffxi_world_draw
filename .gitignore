@@ -1,2 +1,4 @@
 example/*.dll
 *.o
+lua/*.dll
+lua/worlddrawdemo/libs/*.dll

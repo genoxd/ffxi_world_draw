@@ -160,18 +160,15 @@ public:
     void __stdcall PostRender() override {
         frame_transforms_valid_ = false;
 
-        if (!d3d_device_) {
-            AcquireDevice();
-        }
-
         if (!draw_enabled_) {
             return;
         }
 
-        ensure_resolution();
         OnFrame();
 
-        if (!hook_installed_ && !hook_install_failed_ && d3d_device_) {
+        // Normally a no-op: setup happens at Open(), but a plugin front-end
+        // loaded before the device exists gets another chance here.
+        if (!hook_installed_ && !hook_install_failed_ && EnsureDevice()) {
             install_device_hooks();
         }
     }
@@ -192,12 +189,45 @@ protected:
     virtual void OnError(const char* message) { (void)message; }
 
     void SetDrawEnabled(bool enabled) { draw_enabled_ = enabled; }
+
+    // Front-ends that can be opened by several consumers at once (a Lua module
+    // is loaded once per addon, but the image and its hooks are shared) pair
+    // these. The hooks come out only when the last consumer has gone. Both the
+    // count and the decision it drives are taken under the chain lock, so they
+    // cannot disagree with what another module is doing to the same chain.
+    void Open() {
+        chain_lock();
+        ++open_count_;
+        chain_unlock();
+
+        // Setup is not per-frame work: find the renderer, take the device it
+        // owns, and get the hooks in. A caller should not have to have ticked
+        // before any of this is usable.
+        if (EnsureDevice() && !hook_installed_ && !hook_install_failed_) {
+            install_device_hooks();
+        }
+    }
+
+    void Close() {
+        chain_lock();
+        const int remaining = open_count_ > 0 ? --open_count_ : 0;
+        if (remaining == 0) {
+            shutdown_device_hooks();
+        }
+        chain_unlock();
+    }
+
+    int OpenCount() const { return open_count_; }
+
+
+    // Take the hooks out if nothing chained on top, and go inert either way.
+    void Shutdown() { shutdown_device_hooks(); }
     bool DrawEnabled() const { return draw_enabled_; }
 
     // Make a texture from pixels you already have: 32-bit BGRA, `width` * 4
     // bytes per row, top row first. Returns 0 on failure.
     TextureId CreateTexture(const void* pixels, int width, int height) {
-        if (!pixels || width <= 0 || height <= 0 || !d3d_device_) {
+        if (!pixels || width <= 0 || height <= 0 || !EnsureDevice()) {
             return 0;
         }
 
@@ -266,7 +296,11 @@ protected:
     // Load an image file (png, jpg, bmp, gif, tiff). Requires linking gdiplus.
     // Never call this while drawing -- decoding is slow.
     TextureId LoadTexture(const char* path) {
-        if (!path || !d3d_device_) {
+        if (!path) {
+            return 0;
+        }
+        if (!EnsureDevice()) {
+            report_error("texture: no graphics device available");
             return 0;
         }
 
@@ -281,6 +315,7 @@ protected:
 
         WCHAR wide[MAX_PATH] {};
         if (MultiByteToWideChar(CP_UTF8, 0, path, -1, wide, MAX_PATH) == 0) {
+            report_error("texture: path could not be converted");
             return 0;
         }
 
@@ -372,11 +407,44 @@ private:
 #endif
     }
 
+    // The device is fetched on demand, so callers are not required to have
+    // ticked first before creating textures.
+    bool EnsureDevice() {
+        if (!d3d_device_) {
+            ensure_resolution();
+            AcquireDevice();
+        }
+        return d3d_device_ != nullptr;
+    }
+
     void AcquireDevice() {
         void* device = plugin_manager_ ? plugin_manager_->GetDirect3D8Device() : nullptr;
+        if (!device) {
+            device = DeviceFromGame();
+        }
         if (device) {
             d3d_device_ = static_cast<IDirect3DDevice8*>(device);
         }
+    }
+
+    // Without a PluginManager to ask, take the device the game itself is using.
+    void* DeviceFromGame() {
+        if (renderer_global_ == 0) {
+            return nullptr;
+        }
+
+        std::uint32_t renderer = 0;
+        if (!read_memory(static_cast<std::uintptr_t>(renderer_global_), renderer) || !renderer) {
+            return nullptr;
+        }
+
+        std::uint32_t device = 0;
+        if (!read_memory(static_cast<std::uintptr_t>(renderer) + renderer_device_offset_, device)
+            || !device) {
+            return nullptr;
+        }
+
+        return reinterpret_cast<void*>(static_cast<std::uintptr_t>(device));
     }
 
     void DispatchWorldDraw(IDirect3DDevice8* device) {
@@ -455,6 +523,7 @@ private:
 
     Vertex vertices_[vertex_batch_] {};
     bool draw_enabled_ = true;
+    inline static int open_count_ = 0;
 
     typedef void (*DeviceMethod)();
     typedef HRESULT (__stdcall* ResetMethod)(IDirect3DDevice8*, D3DPRESENT_PARAMETERS*);
@@ -1399,6 +1468,7 @@ private:
         0x8B, 0x0D, 0x00, 0x00, 0x00, 0x00, 0x89, 0xB9, 0x94, 0x01, 0x00, 0x00};
     static constexpr char renderer_mask_[13] = "xx????xxxxxx";
     static constexpr std::uintptr_t renderer_scene_depth_offset_ = 0x1A4;
+    static constexpr std::uintptr_t renderer_device_offset_ = 0x0C;
     inline static WorldDrawPlugin* hook_owner_ = nullptr;
     inline static DeviceMethod* hook_vtable_ = nullptr;
     inline static DeviceMethod original_methods_[hook_slot_count_] {};
