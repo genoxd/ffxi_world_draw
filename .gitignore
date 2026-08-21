@@ -1,4 +1,31 @@
-example/*.dll
+# The DLLs in this tree are DELIVERABLES and are committed on purpose, so that
+# nobody installing an addon or a plugin needs a compiler:
+#
+#   lua/worlddraw.dll                  the engine
+#   daemon/worlddraw_daemon.dll        the hook daemon
+#   lua/worlddrawdemo/libs/*.dll       the demo addon, ready to copy and load
+#   example/example.dll                the demo plugin
+#   example/worlddraw_daemon.dll       the daemon that ships beside it
+#
+# Only intermediates and diagnostics are ignored.
+
+# Object files. Every build script removes its own; this is the backstop.
 *.o
-lua/*.dll
-lua/worlddrawdemo/libs/*.dll
+
+# Harness and tool output directories (tools/*/build).
+build/
+
+# The render-thread probe image from lua/build-probe.sh. A diagnostic build,
+# not part of the kit, and never deployed to a player.
+lua/worlddraw_probe.dll
+
+# Working notes, not deliverables: the design record and the render-thread
+# probe's operating note are for developing this library, not for the people
+# installing it. They stay out of the shipped tree.
+lua/DESIGN.md
+lua/PROBE.md
+lua/build-probe.sh
+
+# Python bytecode from the build gates.
+__pycache__/
+*.pyc

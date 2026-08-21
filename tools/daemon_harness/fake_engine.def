@@ -1,0 +1,5 @@
+EXPORTS
+    fe_create_set = fe_create_set@12
+    fe_destroy_set = fe_destroy_set@4
+    fe_seal_set = fe_seal_set@4
+    fe_module = fe_module@0

@@ -22,6 +22,50 @@ public:
     }
 
 private:
+    // Without this the library's failures go nowhere: OnError does nothing
+    // until a plugin overrides it, so a missing worlddraw_daemon.dll beside
+    // this DLL would simply draw nothing and say nothing. The Lua front-end
+    // prints these for its addons; a plugin has to do it itself.
+    void OnError(const char* message) override {
+        if (!message || !plugin_manager_) {
+            return;
+        }
+
+        FFXI* ffxi = plugin_manager_->GetFFXI();
+        if (!ffxi) {
+            return;
+        }
+
+        // Slot 0 of the FFXI interface is the chat printer; 207 is the mode
+        // Windower's own addons use for plain informational text.
+        typedef void(__stdcall* ChatPrint)(FFXI*, const char*, std::uint32_t);
+        ChatPrint* vtable = *reinterpret_cast<ChatPrint**>(ffxi);
+        if (!vtable || !vtable[0]) {
+            return;
+        }
+
+        // The library separates lines with \n; the chat printer takes one
+        // line at a time.
+        char line[512] {};
+        std::size_t length = 0;
+        for (const char* c = message; ; ++c) {
+            if (*c == '\n' || *c == '\0') {
+                line[length] = '\0';
+                if (length > 0) {
+                    vtable[0](ffxi, line, 207);
+                }
+                length = 0;
+                if (*c == '\0') {
+                    break;
+                }
+                continue;
+            }
+            if (length + 1 < sizeof(line)) {
+                line[length++] = *c;
+            }
+        }
+    }
+
     void OnFrame() override {
         // Textures need a device, so make them on a frame rather than at load.
         if (!image_) {

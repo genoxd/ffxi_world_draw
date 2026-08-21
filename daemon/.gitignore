@@ -1,0 +1,4 @@
+# worlddraw_daemon.dll is a DELIVERABLE and is committed: every addon and every
+# plugin ships a copy of it, and no player should have to build one. Do not add
+# a *.dll rule here.
+*.o

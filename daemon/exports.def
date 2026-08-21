@@ -1,0 +1,3 @@
+LIBRARY "worlddraw_daemon"
+EXPORTS
+    wd_daemon_acquire = wd_daemon_acquire@4
